@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 
 cap = cv2.VideoCapture(0)
 
@@ -13,26 +14,52 @@ while True:
     if not ret:
         break
 
-    # 1. 画像処理
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    h_frame, w_frame, _ = frame.shape
     
-    # ★ 閾値を少し広めに調整 (30, 100に変更)
-    edges = cv2.Canny(blur, 30, 100)
-    
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    for cnt in contours:
-        # ★ 面積のハードルを 500 から 100 に下げて、小さなものも検知しやすくする
-        if cv2.contourArea(cnt) > 100:
-            x, y, w, h = cv2.boundingRect(cnt)
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+    # 1. 本棚が映りやすいように中央付近のエリアを切り出し（ROI設定）
+    # 必要に応じて比率は調整してください
+    y_min, y_max = int(h_frame * 0.2), int(h_frame * 0.9)
+    x_min, x_max = int(w_frame * 0.05), int(w_frame * 0.95)
+    roi = frame[y_min:y_max, x_min:x_max]
+    roi_h, roi_w, _ = roi.shape
 
-    # 映像を表示
-    cv2.imshow('Bookshelf Monitor - Prototype', frame)
+    # 2. グレースケール化 ＆ エッジ検出
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blur, 50, 150)
+
+    # 3. 垂直投影ヒストグラムの作成（横軸Xごとの白ピクセル数を縦方向に合計）
+    projection = np.sum(edges, axis=0) / 255
+
+    # 4. ヒストグラムの「谷（隙間）」を利用して本を1冊ずつ分離する
+    # エッジの量が一定値以下の場所を「本と本の境界（隙間）」とみなす
+    threshold = np.max(projection) * 0.08  # 感度調整用の閾値
     
-    # ★ エッジ（白黒の線）がどう見えているか確認用の小窓を追加
-    cv2.imshow('Edges Check', edges)
+    books = []
+    in_book = False
+    start_x = 0
+
+    for x in range(roi_w):
+        if projection[x] > threshold and not in_book:
+            in_book = True
+            start_x = x
+        elif projection[x] <= threshold and in_book:
+            in_book = False
+            end_x = x
+            # 極端に狭すぎるノイズを除外し、ある程度幅があるものを「1冊」とする
+            if (end_x - start_x) > 15:
+                books.append((start_x, end_x))
+
+    # 5. 検出した範囲を全体のフレーム座標に変換して緑の枠で描画
+    for (start_x, end_x) in books:
+        x1 = start_x + x_min
+        y1 = y_min
+        x2 = end_x + x_min
+        y2 = y_max
+        
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+    cv2.imshow('Bookshelf Monitor - Prototype', frame)
 
     key = cv2.waitKey(1) & 0xFF
     if key == ord('q'):
