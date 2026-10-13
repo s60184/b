@@ -1,0 +1,163 @@
+```python
+# ==========================================
+# 3. UI・データ分析担当領域
+# ==========================================
+
+import streamlit as st
+import pandas as pd
+import cv2
+import sqlite3
+from datetime import datetime
+
+# データベース初期化
+def init_db():
+    conn = sqlite3.connect("inventory.db")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS inventory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            book_count INTEGER NOT NULL
+        )
+    """)
+
+    conn.commit()
+    return conn
+
+
+# 本の検知処理
+# 実際の検知アルゴリズムに合わせて変更する
+def detect_books(frame):
+    # 現時点では検知処理が未実装
+    # チームの画像処理担当者が作成した関数に置き換える
+    count = 0
+    processed_frame = frame.copy()
+
+    return processed_frame, count
+
+
+# ==========================================
+# UI・データ分析
+# ==========================================
+
+st.set_page_config(
+    page_title="本棚在庫管理システム",
+    page_icon="📚",
+    layout="wide"
+)
+
+st.title("📚 本棚在庫管理システム (Prototype)")
+st.write("カメラで本を検知し、在庫数の推移を管理します。")
+
+conn = init_db()
+
+# サイドバー
+st.sidebar.header("コントロールパネル")
+
+if st.sidebar.button("📷 カメラで在庫を確認"):
+
+    cap = cv2.VideoCapture(0)
+
+    try:
+        ret, frame = cap.read()
+    finally:
+        cap.release()
+
+    if ret:
+        # 画像処理担当の関数を呼び出す
+        processed_frame, count = detect_books(frame)
+
+        # データベースに保存
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO inventory (timestamp, book_count) VALUES (?, ?)",
+            (now, count)
+        )
+        conn.commit()
+
+        # 検知画像を表示
+        processed_rgb = cv2.cvtColor(
+            processed_frame, cv2.COLOR_BGR2RGB
+        )
+
+        st.image(
+            processed_rgb,
+            caption=f"検知結果：{count}冊",
+            use_container_width=True
+        )
+
+        st.success(
+            f"{now} に {count}冊のデータを保存しました！"
+        )
+
+    else:
+        st.error("カメラからの映像取得に失敗しました。")
+
+# 区切り線
+st.divider()
+
+# 在庫データ
+st.subheader("📊 在庫データの推移")
+
+df = pd.read_sql_query(
+    "SELECT * FROM inventory ORDER BY timestamp ASC",
+    conn
+)
+
+if not df.empty:
+
+    # 日時データを変換
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+    # 最新の在庫情報を表示
+    latest_count = int(df.iloc[-1]["book_count"])
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric(
+            label="最新の在庫数",
+            value=f"{latest_count} 冊"
+        )
+
+    with col2:
+        st.metric(
+            label="記録件数",
+            value=f"{len(df)} 件"
+        )
+
+    # 最新5件のデータを表示
+    st.subheader("📋 最近の在庫記録")
+
+    display_df = df.tail(5).copy()
+    display_df["timestamp"] = display_df["timestamp"].dt.strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # 折れ線グラフ
+    st.subheader("📈 在庫数の変化")
+
+    chart_df = df.set_index("timestamp")
+
+    st.line_chart(
+        chart_df["book_count"],
+        x_label="日時",
+        y_label="本の冊数"
+    )
+
+else:
+    st.info(
+        "まだデータがありません。"
+        "左側のボタンからカメラを起動してください。"
+    )
+
+conn.close()
+```
